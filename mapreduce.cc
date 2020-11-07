@@ -7,12 +7,13 @@
 #include <mutex>
 #include "mapreduce.hh"
 #include <cassert>
+#include <fstream>
 
 namespace MapReduce{
 // C++ redefinition of mapreduce.h
 
 using list_t = std::vector<std::pair<std::string, std::string>>;
-using pair_t = std::pair<int, list_t>;
+using pair_t = std::pair<long unsigned int, list_t>;
 using results_t = std::vector<pair_t>;
 using part_t = int;
 
@@ -24,30 +25,6 @@ using part_t = int;
 results_t mapped_results;
 std::queue<char*> files_queue;
 std::mutex queue_mutex;
-
-void Map(const char *file_name) {
-    FILE *fp = fopen(file_name, "r");
-    assert(fp != NULL);
-
-    char *line = NULL;
-    size_t size = 0;
-    while (getline(&line, &size, fp) != -1) {
-        char *token, *dummy = line;
-        while ((token = strsep(&dummy, " \t\n\r")) != NULL) {
-            MR_Emit(token, "1");
-        }
-    }
-    free(line);
-    fclose(fp);
-}
-
-void Reduce(const std::string& key, getter_t get_next, int partition_number) {
-    int count = 0;
-    std::string value;
-    while ((value = get_next(key, partition_number)) != "")
-        count++;
-    std::cout << key << " " << count << "\n";
-}
 
 /*
 This function needs to take key value pairs from many different 
@@ -80,7 +57,7 @@ std::string getter(const std::string& key, int partition_number)
     list_t partition = mapped_results[index].second;
 
     // Find the next key instance starting from previous key instance
-    for(int i = mapped_results[index].first; i < partition.size(); i++)
+    for(long unsigned int i = mapped_results[index].first; i < partition.size(); i++)
     {
         if(key.compare(partition[i].first) == 0)
         {
@@ -108,10 +85,9 @@ partition.
 unsigned long MR_DefaultHashPartition(const std::string& key, int num_partitions)
 {
     unsigned long hash = 5381;
-    int c;
-    for(int i = 0; i < key.length(); i++)
+    for(long unsigned int i = 0; i < key.length(); i++)
     {
-        hash = hash * 33 + c;
+        hash = hash * 33 + key[i];
     }
     return hash % num_partitions;
 }
@@ -165,28 +141,28 @@ void reducer_manager(reducer_t reduce, int part_number)
 void MR_Run(int argc, char* argv[], mapper_t map, int num_mappers, reducer_t reduce, int num_reducers, partitioner_t partition)
 {
 
+    
     // Place the files into the queue
-    for(int i = 0; i < argc; i++)
+    for(int i = 1; i < argc; i++)
     {
         files_queue.push(argv[i]);
     }
-
+    
     // Initialize one partition for each reducer
     for(int i = 0; i < num_reducers; i++)
     {
         list_t list;
-        //list.push_back("hello there");
         pair_t pair(0, list);
         mapped_results.push_back(pair);
     }
-
+    
     // start mappers
     std::vector<std::thread> mappers;
     for(int i = 0; i < num_mappers; i++)
     {
         mappers.push_back(std::thread(mapper_pool, map));
     }
-
+    std::cout << "here now \n";
     // wait for mappers to complete
     for(int i = 0; i < num_mappers; i++)
     {
@@ -194,7 +170,7 @@ void MR_Run(int argc, char* argv[], mapper_t map, int num_mappers, reducer_t red
     }
 
     // sort the partitions
-    for(int i = 0; i < mapped_results.size(); i++)
+    for(long unsigned int i = 0; i < mapped_results.size(); i++)
     {
         std::sort(mapped_results[i].second.begin(), mapped_results[i].second.end());
     }
@@ -212,11 +188,43 @@ void MR_Run(int argc, char* argv[], mapper_t map, int num_mappers, reducer_t red
         reducers[i].join();
     }
 }
+}
+
+void Map(const char *file_name) 
+{
+    std::string pattern = "the";
+    std::string line = "";
+    std::ifstream input_file;
+    input_file.open(file_name);
+    if(input_file.is_open())
+    {
+        while(std::getline(input_file, line))
+        {
+            if(line.find(pattern) != std::string::npos)
+            {
+                MapReduce::MR_Emit(line, "1");
+            }
+        }
+        input_file.close();
+    }
+    else
+    {
+        std::cout << "Unable to open file: " << file_name << "\n";
+    }
+}
+
+void Reduce(const std::string& key, MapReduce::getter_t get_next, int partition_number) 
+{
+    std::string value;
+    while ((value = get_next(key, partition_number)) != "")
+    {
+        std::cout << key << "\n";
+    }
+}
 
 int main(int argc, char* argv[])
 {
-    MR_Run(argc, argv, Map, 10, Reduce, 10, MR_DefaultHashPartition);
+    MapReduce::MR_Run(argc, argv, Map, 1, Reduce, 1, MapReduce::MR_DefaultHashPartition);
     return 0;
 }
 
-}
