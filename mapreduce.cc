@@ -8,12 +8,15 @@
 #include "mapreduce.hh"
 #include <cassert>
 #include <fstream>
+#include <memory>
 
+std::mutex output;
 namespace MapReduce{
 // C++ redefinition of mapreduce.h
 
 using list_t = std::vector<std::pair<std::string, std::string>>;
-using pair_t = std::pair<long unsigned int, list_t>;
+using util_t = std::pair<long unsigned int, std::mutex*>;
+using pair_t = std::pair<util_t, list_t>;
 using results_t = std::vector<pair_t>;
 using part_t = int;
 
@@ -25,6 +28,7 @@ using part_t = int;
 results_t mapped_results;
 std::queue<char*> files_queue;
 std::mutex queue_mutex;
+
 
 /*
 This function needs to take key value pairs from many different 
@@ -46,28 +50,34 @@ void MR_Emit(const std::string& key, const std::string& value)
 {
     int index = MR_DefaultHashPartition(key, mapped_results.size());
     std::pair<std::string, std::string> pair(key, value);
-    mapped_results[index].second.push_back(pair);
+    // need to acquire the lock for the bucket
+    {
+        std::lock_guard<std::mutex> lock(*(mapped_results[index].first.second));
+        mapped_results[index].second.push_back(pair);
+    }
 }
 
 
-std::string getter(const std::string& key, int partition_number)
+std::string getter(const std::string& key, int part_number)
 {
     //int index = MR_DefaultHashPartition(key, mapped_results.size());
-    int index = partition_number;
-    list_t partition = mapped_results[index].second;
+    list_t partition = mapped_results[part_number].second;
 
     // Find the next key instance starting from previous key instance
-    for(long unsigned int i = mapped_results[index].first; i < partition.size(); i++)
+    long unsigned int i = mapped_results[part_number].first.first;
+    if(i < partition.size())
     {
         if(key.compare(partition[i].first) == 0)
         {
-            mapped_results[index].first = i;
-            return partition[i].second;
+            mapped_results[part_number].first.first= i + 1;
+            return partition[i].second; 
+        }
+        else
+        {
+            // since the partition is sorted
+            return "";
         }
     }
-
-    // If there are no more occurances of the key to find
-    mapped_results[index].first += 1;
     return "";
 }
 
@@ -112,9 +122,15 @@ void mapper_pool(mapper_t map)
 
 void reducer_manager(reducer_t reduce, int part_number)
 {
-    while(mapped_results[part_number].first < mapped_results[part_number].second.size())
+    /* for(unsigned long int i = 0; i < mapped_results[part_number].second.size(); i++)
     {
-        std::string key = mapped_results[part_number].second[mapped_results[part_number].first].first;
+        std::cout << "key: " << mapped_results[part_number].second[i].first << " value: " << mapped_results[part_number].second[i].second << "\n";
+    } */
+    while(mapped_results[part_number].first.first < mapped_results[part_number].second.size())
+    {
+        // Get the index
+        int next_key_index = mapped_results[part_number].first.first;
+        std::string key = mapped_results[part_number].second[next_key_index].first;
         reduce(key, getter, part_number);
     }
 }
@@ -152,7 +168,9 @@ void MR_Run(int argc, char* argv[], mapper_t map, int num_mappers, reducer_t red
     for(int i = 0; i < num_reducers; i++)
     {
         list_t list;
-        pair_t pair(0, list);
+        std::mutex* mtx_ptr = new std::mutex;
+        util_t util(0, mtx_ptr);
+        pair_t pair(util, list);
         mapped_results.push_back(pair);
     }
     
@@ -162,7 +180,6 @@ void MR_Run(int argc, char* argv[], mapper_t map, int num_mappers, reducer_t red
     {
         mappers.push_back(std::thread(mapper_pool, map));
     }
-    std::cout << "here now \n";
     // wait for mappers to complete
     for(int i = 0; i < num_mappers; i++)
     {
@@ -173,6 +190,8 @@ void MR_Run(int argc, char* argv[], mapper_t map, int num_mappers, reducer_t red
     for(long unsigned int i = 0; i < mapped_results.size(); i++)
     {
         std::sort(mapped_results[i].second.begin(), mapped_results[i].second.end());
+        // free mutex's
+        delete mapped_results[i].first.second;
     }
 
     // start reducers
@@ -218,13 +237,16 @@ void Reduce(const std::string& key, MapReduce::getter_t get_next, int partition_
     std::string value;
     while ((value = get_next(key, partition_number)) != "")
     {
-        std::cout << key << "\n";
+        {
+            std::lock_guard<std::mutex> lock(output);
+            std::cout << key << "\n";
+        }
     }
 }
 
 int main(int argc, char* argv[])
 {
-    MapReduce::MR_Run(argc, argv, Map, 1, Reduce, 1, MapReduce::MR_DefaultHashPartition);
+    MapReduce::MR_Run(argc, argv, Map, 10, Reduce, 10, MapReduce::MR_DefaultHashPartition);
     return 0;
 }
 
