@@ -1,0 +1,12 @@
+a 3
+boy 1
+into 1
+over 1
+swam 1
+river 1
+jumped 2
+in 1
+man 1
+log 1
+he 1
+the 1

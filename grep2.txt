@@ -1,0 +1,2 @@
+the diamond shined.
+this is not printed.
