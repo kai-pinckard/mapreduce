@@ -36,6 +36,8 @@ namespace MapReduce
     results_t mapped_results;
 
     // A queue containing all input files names that need to be mapped
+    // Items are added to the queue in descending order so that
+    // the largest files will be processed first.
     std::queue<char*> files_queue;
     std::mutex queue_mutex;
 
